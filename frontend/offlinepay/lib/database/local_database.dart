@@ -729,113 +729,75 @@ class LocalDatabase {
   // --------------------------------------------------
 
   static Future<void> saveAllowance(
-    Map<String, dynamic> allowance,
-  ) async {
-    final db = await database;
+  Map<String, dynamic> allowance,
+) async {
+  final db = await database;
 
-    final id = allowance['allowance_id']?.toString();
-    final userId = allowance['user_id']?.toString();
-    final deviceId = allowance['device_id']?.toString();
+  final id = allowance['allowance_id']?.toString();
+  final userId = allowance['user_id']?.toString();
+  final deviceId = allowance['device_id']?.toString();
 
-    if (id == null ||
-        id.isEmpty ||
-        userId == null ||
-        userId.isEmpty ||
-        deviceId == null ||
-        deviceId.isEmpty) {
-      throw Exception('Invalid offline allowance.');
-    }
-
-    final amount = _number(allowance['allowance_amount']);
-    final expiry = _integer(allowance['expires_at']);
-
-    if (amount <= 0 || expiry <= 0) {
-      throw Exception('Invalid allowance amount or expiry.');
-    }
-
-    await db.insert(
-      'offline_allowances',
-      {
-        'allowance_id': id,
-        'user_id': userId,
-        'device_id': deviceId,
-        'allowance_amount': amount,
-        'spent_amount': _number(allowance['spent_amount']),
-        'expires_at': expiry,
-        'status': allowance['status']?.toString() ?? 'ACTIVE',
-        'created_at': DateTime.now().millisecondsSinceEpoch,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+  if (id == null || id.isEmpty ||
+      userId == null || userId.isEmpty ||
+      deviceId == null || deviceId.isEmpty) {
+    throw Exception('Invalid offline allowance.');
   }
 
-  static Future<Map<String, dynamic>?> getAllowance(
-    String allowanceId,
-  ) async {
-    final db = await database;
+  final amount = _number(allowance['allowance_amount']);
+  final expiry = _integer(allowance['expires_at']);
 
-    final rows = await db.query(
+  if (amount <= 0 || expiry <= 0) {
+    throw Exception('Invalid allowance amount or expiry.');
+  }
+
+  await db.transaction((txn) async {
+    final existing = await txn.query(
       'offline_allowances',
       where: 'allowance_id = ?',
-      whereArgs: [allowanceId],
+      whereArgs: [id],
       limit: 1,
     );
 
-    if (rows.isEmpty) return null;
+    final now = DateTime.now().millisecondsSinceEpoch;
 
-    return Map<String, dynamic>.from(rows.first);
-  }
+    if (existing.isNotEmpty) {
+      final old = existing.first;
 
-  // Get the one active allowance belonging to this device.
-  static Future<Map<String, dynamic>?> getActiveAllowance({
-    required String userId,
-    required String deviceId,
-  }) async {
-    final db = await database;
+      // Never reduce or reset locally recorded spending.
+      final oldSpent = _number(old['spent_amount']);
+      final serverSpent = _number(allowance['spent_amount']);
+      final safeSpent = oldSpent > serverSpent
+          ? oldSpent
+          : serverSpent;
 
-    final rows = await db.query(
-      'offline_allowances',
-      where: 'user_id = ? AND device_id = ? AND status = ?',
-      whereArgs: [userId, deviceId, 'ACTIVE'],
-      orderBy: 'created_at DESC',
-      limit: 1,
-    );
-
-    if (rows.isEmpty) return null;
-
-    return Map<String, dynamic>.from(rows.first);
-  }
-
-  static Future<bool> canSpendFromAllowance({
-    required String allowanceId,
-    required String userId,
-    required String deviceId,
-    required double amount,
-  }) async {
-    if (amount <= 0 || !amount.isFinite) return false;
-
-    final allowance = await getAllowance(allowanceId);
-
-    if (allowance == null) return false;
-
-    if (allowance['user_id'] != userId ||
-        allowance['device_id'] != deviceId ||
-        allowance['status'] != 'ACTIVE') {
-      return false;
+      await txn.update(
+        'offline_allowances',
+        {
+          'allowance_amount': amount,
+          'spent_amount': safeSpent,
+          'expires_at': expiry,
+          'status': allowance['status']?.toString() ?? 'ACTIVE',
+        },
+        where: 'allowance_id = ?',
+        whereArgs: [id],
+      );
+    } else {
+      await txn.insert(
+        'offline_allowances',
+        {
+          'allowance_id': id,
+          'user_id': userId,
+          'device_id': deviceId,
+          'allowance_amount': amount,
+          'spent_amount': _number(allowance['spent_amount']),
+          'expires_at': expiry,
+          'status': allowance['status']?.toString() ?? 'ACTIVE',
+          'created_at': now,
+        },
+      );
     }
-
-    final expiry = _integer(allowance['expires_at']);
-
-    if (DateTime.now().millisecondsSinceEpoch >= expiry) {
-      return false;
-    }
-
-    final limit = _number(allowance['allowance_amount']);
-    final spent = _number(allowance['spent_amount']);
-
-    return amount <= limit - spent;
-  }
-
+  });
+}
   // --------------------------------------------------
   // TRANSACTION METHODS
   // --------------------------------------------------

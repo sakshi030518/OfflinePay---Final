@@ -318,6 +318,15 @@ def validate_qr_timing(payment) -> None:
 def validate_allowance(
     db: Session,
     payment,
+        # Payment QR and merchant ACK must be within 2 minutes.
+    qr_duration = (
+        acknowledgement_time - payment_time
+    ).total_seconds()
+
+    if qr_duration < 0 or qr_duration > 120:
+        raise ValueError(
+            "Payment QR or merchant ACK has expired."
+        )
 ) -> OfflineAllowance:
 
     allowance = (
