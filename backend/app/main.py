@@ -192,20 +192,6 @@ def signup(
         .first()
     )
 
-            if existing:
-            # Never reserve the same funds twice.
-            # Return the existing server-authorized allowance.
-            if existing.expires_at <= datetime.utcnow():
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        "Your previous allowance has expired. "
-                        "Reconcile pending payments before requesting another."
-                    ),
-                )
-
-            return allowance_response(existing)
-            
     uid = "USR-" + uuid4().hex[:12].upper()
 
     user = User(
