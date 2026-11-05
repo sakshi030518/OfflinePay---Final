@@ -1,0 +1,44 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# Secrets and environment files
+.env
+.env.*
+!.env.example
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+.flutter-versions
+
+# IDE files
+.vscode/
+.idea/
+
+# Logs and local databases
+*.log
+*.sqlite
+*.sqlite3
+*.db
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Local database files and backups
+*.db
+*.sqlite
+*.sqlite3
+*.dump
+*.backup
+*.sql

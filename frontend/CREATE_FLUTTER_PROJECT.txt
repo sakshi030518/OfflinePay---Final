@@ -1,0 +1,7 @@
+From the frontend folder run:
+flutter create offlinepay
+Then replace the generated lib folder, pubspec.yaml and AndroidManifest.xml with the supplied files.
+Then:
+cd offlinepay
+flutter pub get
+flutter run
