@@ -75,6 +75,14 @@ class Wallet(Base):
         nullable=False,
     )
 
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+
 
 # ==================================================
 # TRANSACTIONS

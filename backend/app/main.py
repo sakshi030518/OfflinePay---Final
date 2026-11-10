@@ -181,6 +181,7 @@ def signup(
     email = str(x.email).lower().strip()
     phone = x.phone.strip()
 
+
     existing_user = (
         db.query(User)
         .filter(
@@ -191,12 +192,13 @@ def signup(
         )
         .first()
     )
+
     if existing_user:
-    raise HTTPException(
-        status_code=409,
-        detail="An account with this email or phone number already exists."
-    )
-    
+        raise HTTPException(
+            status_code=409,
+            detail="An account with this email or phone number already exists."
+        )
+
     uid = "USR-" + uuid4().hex[:12].upper()
 
     user = User(
