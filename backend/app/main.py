@@ -191,7 +191,12 @@ def signup(
         )
         .first()
     )
-
+    if existing_user:
+    raise HTTPException(
+        status_code=409,
+        detail="An account with this email or phone number already exists."
+    )
+    
     uid = "USR-" + uuid4().hex[:12].upper()
 
     user = User(
