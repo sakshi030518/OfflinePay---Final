@@ -77,21 +77,22 @@ def create_bank_account(
     db.add(account)
     db.flush()
 
+    
     # Record the opening balance in the bank statement.
+        opening_reference = "OPEN-" + secrets.token_hex(8).upper()
+
     opening_entry = BankLedger(
-        transaction_id=None,
+        transaction_id=opening_reference,
         user_id=user_id,
         entry_type="CREDIT",
         amount=OPENING_BALANCE,
         balance_after=OPENING_BALANCE,
         description="OfflinePay simulated bank opening balance",
-        reference_number="OPEN-" + secrets.token_hex(8).upper(),
+        reference_number=opening_reference,
         status="COMPLETED",
     )
 
     db.add(opening_entry)
-
-    return account
 
 
 # --------------------------------------------------
