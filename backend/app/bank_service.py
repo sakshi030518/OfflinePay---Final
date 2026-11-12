@@ -45,6 +45,7 @@ def generate_account_number(db: Session) -> str:
 # CREATE BANK ACCOUNT
 # --------------------------------------------------
 
+
 def create_bank_account(
     db: Session,
     user_id: str,
@@ -52,9 +53,7 @@ def create_bank_account(
 ) -> BankAccount:
     """
     Create one simulated bank account for a newly registered user.
-
-    This function must only be called during registration,
-    not during login.
+    This function must only be called during registration.
     """
 
     existing = db.query(BankAccount).filter(
@@ -77,22 +76,20 @@ def create_bank_account(
     db.add(account)
     db.flush()
 
-    
-    # Record the opening balance in the bank statement.
-        opening_reference = "OPEN-" + secrets.token_hex(8).upper()
-
     opening_entry = BankLedger(
-        transaction_id=opening_reference,
+        transaction_id="OPEN-" + secrets.token_hex(12).upper(),
         user_id=user_id,
         entry_type="CREDIT",
         amount=OPENING_BALANCE,
         balance_after=OPENING_BALANCE,
         description="OfflinePay simulated bank opening balance",
-        reference_number=opening_reference,
+        reference_number="OPENREF-" + secrets.token_hex(8).upper(),
         status="COMPLETED",
     )
 
     db.add(opening_entry)
+
+    return account
 
 
 # --------------------------------------------------
