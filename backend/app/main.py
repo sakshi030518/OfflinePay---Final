@@ -18,6 +18,8 @@ from fastapi.security import (
     HTTPAuthorizationCredentials,
 )
 
+from .device_service import register_device, create_device_certificate
+
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
@@ -45,6 +47,7 @@ from .schemas import (
     DeviceResponse,
     OfflineAllowanceRequest,
     OfflineAllowanceResponse,
+    DeviceCertificateResponse,
 )
 
 from .auth import (
@@ -63,8 +66,6 @@ from .bank_service import (
 
 from .email_service import send_welcome_email
 from .sync_service import synchronize_payment
-from .device_service import register_device
-
 
 # ==================================================
 # DATABASE AND APPLICATION
@@ -517,6 +518,28 @@ def register_user_device(
             detail="Unable to register device.",
         )
 
+@app.get(
+    "/devices/{device_id}/certificate",
+    response_model=DeviceCertificateResponse
+)
+def get_device_certificate(
+    device_id: str,
+    user=Depends(get_user),
+    db: Session = Depends(get_db)
+):
+    device = db.query(Device).filter(
+        Device.device_id == device_id,
+        Device.user_id == user.user_id,
+        Device.active.is_(True)
+    ).first()
+
+    if not device:
+        raise HTTPException(
+            status_code=404,
+            detail="Active registered device not found."
+        )
+
+    return create_device_certificate(device)
 
 # ==================================================
 # GET REGISTERED DEVICE PUBLIC KEY
