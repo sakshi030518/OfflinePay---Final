@@ -66,6 +66,11 @@ class DeviceResponse(BaseModel):
     active: bool
 
 
+class DeviceCertificateResponse(BaseModel):
+    certificate: dict
+    signature: str
+
+
 # ==================================================
 # PAYMENT DATA
 # ==================================================
@@ -230,3 +235,8 @@ class TransactionResponse(BaseModel):
 
     amount: Decimal
     status: str
+
+
+class DeviceCertificateResponse(BaseModel):
+    certificate: dict
+    signature: str
