@@ -18,7 +18,14 @@ class QrService {
   static const String _deviceIdKey = 'offlinepay_device_id';
   static const String _privateKeyKey =
       'offlinepay_ed25519_private_seed';
+  static const String _deviceCertificateKey =
+      'offlinepay_signed_device_certificate';
 
+  static const String _backendPublicKey = '''
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEADsZZEtZBiDyxcRka1o5S0F+07V+nrHAeQ2B1oUNWHYw=
+-----END PUBLIC KEY-----
+''';
   // ---------------- QR HELPERS ----------------
 
   static String req() =>
@@ -77,6 +84,11 @@ class QrService {
 
     return id;
   }
+
+  static Future<void> printDeviceId() async {
+  final id = await deviceId();
+  print('OFFLINEPAY DEVICE ID: $id');
+}
 
   // ---------------- ED25519 KEY STORAGE ----------------
 
@@ -274,7 +286,110 @@ class QrService {
       return false;
     }
   }
+  // ---------------- DEVICE CERTIFICATE ----------------
 
+  static String _canonicalCertificate(Map certificate) {
+    final keys = certificate.keys.map((e) => e.toString()).toList()
+      ..sort();
+
+    final sorted = <String, dynamic>{};
+
+    for (final key in keys) {
+      sorted[key] = certificate[key];
+    }
+
+    return jsonEncode(sorted);
+  }
+
+  static Future<void> saveDeviceCertificate(
+    Map response, {
+    required String expectedUserId,
+  }) async {
+    final rawCertificate = response['certificate'];
+    final signature = response['signature']?.toString();
+
+    if (rawCertificate is! Map ||
+        signature == null ||
+        signature.isEmpty) {
+      throw Exception('Invalid device certificate.');
+    }
+
+    final certificate =
+        Map<String, dynamic>.from(rawCertificate);
+
+    final currentDeviceId = await deviceId();
+    final certificateEnvelope = await currentDeviceCertificate(
+  expectedUserId: customerId,
+);
+    final currentPublicKey = await publicKeyPem();
+
+    if (certificate['device_id'] != currentDeviceId ||
+        certificate['user_id'] != expectedUserId ||
+        certificate['public_key'] != currentPublicKey ||
+        certificate['key_algorithm'] != 'Ed25519') {
+      throw Exception('Device certificate identity mismatch.');
+    }
+
+    final issuedAt = DateTime.tryParse(
+      certificate['issued_at']?.toString() ?? '',
+    );
+
+    final expiresAt = DateTime.tryParse(
+      certificate['expires_at']?.toString() ?? '',
+    );
+
+    final now = DateTime.now().toUtc();
+
+    if (issuedAt == null ||
+        expiresAt == null ||
+        issuedAt.isAfter(now) ||
+        !expiresAt.isAfter(now)) {
+      throw Exception('Device certificate is expired or invalid.');
+    }
+
+    final validSignature = await verifySignature(
+      publicKeyPem: _backendPublicKey,
+      signature: signature,
+      message: _canonicalCertificate(certificate),
+    );
+
+    if (!validSignature) {
+      throw Exception('Backend certificate signature is invalid.');
+    }
+
+    await _storage.write(
+      key: _deviceCertificateKey,
+      value: jsonEncode({
+        'certificate': certificate,
+        'signature': signature,
+      }),
+    );
+  }
+
+  static Future<Map<String, dynamic>> currentDeviceCertificate({
+    required String expectedUserId,
+  }) async {
+    final saved = await _storage.read(
+      key: _deviceCertificateKey,
+    );
+
+    if (saved == null || saved.isEmpty) {
+      throw Exception(
+        'Device certificate missing. Connect to internet and prepare this device first.',
+      );
+    }
+
+    final response = Map<String, dynamic>.from(
+      jsonDecode(saved) as Map,
+    );
+
+    await saveDeviceCertificate(
+      response,
+      expectedUserId: expectedUserId,
+    );
+
+    return response;
+  }
   // ---------------- PAYMENT REQUEST QR ----------------
 
   static Map request(
@@ -330,6 +445,8 @@ class QrService {
       'token': paymentToken,
       'allowance_id': allowanceId,
       'device_id': currentDeviceId,
+      'device_certificate': certificateEnvelope['certificate'],
+'device_certificate_signature': certificateEnvelope['signature'],
       'payment_created_at': _utcTimestamp(now),
     };
 
@@ -351,6 +468,9 @@ class QrService {
 
     final now = DateTime.now();
     final currentDeviceId = await deviceId();
+    final certificateEnvelope = await currentDeviceCertificate(
+  expectedUserId: merchantId,
+);
 
     if (_requiredString(payment, 'merchant_id') != merchantId) {
       throw Exception('Payment belongs to another merchant.');
@@ -369,6 +489,9 @@ class QrService {
       'allowance_id': _requiredString(payment, 'allowance_id'),
       'device_id': _requiredString(payment, 'device_id'),
       'merchant_device_id': currentDeviceId,
+      'merchant_device_certificate': certificateEnvelope['certificate'],
+'merchant_device_certificate_signature':
+    certificateEnvelope['signature'],
       'payment_created_at':
           _requiredString(payment, 'payment_created_at'),
       'acknowledgement_created_at': _utcTimestamp(now),

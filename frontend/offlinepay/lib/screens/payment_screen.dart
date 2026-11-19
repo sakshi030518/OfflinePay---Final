@@ -21,7 +21,6 @@ class PaymentScreen extends StatefulWidget {
 class _PaymentScreenState extends State<PaymentScreen> {
   bool processing = false;
 
-  static const int qrValidityMs = 120000;
 
   Future<void> generatePaymentQr() async {
     if (processing) return;
@@ -103,19 +102,61 @@ class _PaymentScreenState extends State<PaymentScreen> {
         throw Exception('Invalid offline allowance.');
       }
 
-      // 6. Check allowance amount, expiry and available funds.
-      final canSpend = await LocalDatabase.canSpendFromAllowance(
-        allowanceId: allowanceId,
-        userId: customerId,
-        deviceId: deviceId,
-        amount: amount,
-      );
-
-      if (!canSpend) {
+      // 6. Validate allowance with specific error messages.
+      if (allowance['user_id']?.toString() != customerId ||
+          allowance['device_id']?.toString() != deviceId) {
         throw Exception(
-          'Insufficient or expired offline allowance.',
+          'This allowance is not valid for this device.',
         );
       }
+
+      if (allowance['status']?.toString() != 'ACTIVE') {
+        throw Exception('Offline allowance is not active.');
+      }
+
+      final expiry = (allowance['expires_at'] as num?)?.toInt() ?? 0;
+
+      if (DateTime.now().millisecondsSinceEpoch >= expiry) {
+        throw Exception('Offline allowance has expired.');
+      }
+
+      final allowanceLimit =
+          (allowance['allowance_amount'] as num?)?.toDouble() ?? 0;
+
+      final allowanceSpent =
+          (allowance['spent_amount'] as num?)?.toDouble() ?? 0;
+
+      final remainingAllowance = allowanceLimit - allowanceSpent;
+
+      if (amount > remainingAllowance) {
+        throw Exception(
+          'Insufficient allowance. Available: '
+          '₹${remainingAllowance.toStringAsFixed(2)}',
+        );
+      }
+
+      // Check locally cached, server-verified customer balance.
+      final account = await LocalDatabase.getLocalAccount(customerId);
+
+      if (account == null || account['is_server_verified'] != 1) {
+        throw Exception(
+          'Customer account is not verified for offline payments.',
+        );
+      }
+
+      final balance =
+          (account['verified_balance'] as num?)?.toDouble() ?? 0;
+
+      final reserved =
+          (account['reserved_balance'] as num?)?.toDouble() ?? 0;
+
+      if (amount > balance || amount > reserved) {
+        throw Exception(
+          'Insufficient reserved balance. '
+          'Available: ₹${reserved.toStringAsFixed(2)}',
+        );
+      }
+
 
       // 7. Generate unique transaction ID and payment token.
       final transactionId = QrService.tx();
@@ -133,12 +174,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       );
 
       // 9. Apply a two-minute QR validity period.
-      final now = DateTime.now().millisecondsSinceEpoch;
-
-      paymentPayload['timestamp'] = now;
-      paymentPayload['expiry'] = now + qrValidityMs;
-
-      // 10. Save payment draft locally.
+      // Timestamp and expiry are already included in the signed payload.
       // Actual customer debit occurs only after the customer
       // verifies the merchant's signed ACK QR.
       await LocalDatabase.save({
@@ -149,7 +185,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
         'amount': amount,
         'token': paymentToken,
         'status': 'PAYMENT_QR',
-        'timestamp': now,
+        'timestamp': paymentPayload['timestamp'],
         'expiry': paymentPayload['expiry'],
         'synced': 0,
         'allowance_id': allowanceId,

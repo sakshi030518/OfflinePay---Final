@@ -6,6 +6,7 @@ import '../services/api_service.dart';
 import 'scan_screen.dart';
 import 'transaction_history.dart';
 import 'login_screen.dart';
+import '../services/qr_service.dart';
 
 class CustomerDashboard extends StatefulWidget {
   const CustomerDashboard({super.key});
@@ -24,11 +25,37 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
   bool provisioning = false;
 
   int pendingCount = 0;
+    Map<String, dynamic>? activeAllowance;
+
+  double _toDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '') ?? 0.0;
+  }
+
+  Future<void> _loadAllowance(String userId) async {
+    try {
+      final deviceId = await QrService.deviceId();
+
+      final allowance = await LocalDatabase.getActiveAllowance(
+        userId: userId,
+        deviceId: deviceId,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        activeAllowance = allowance;
+      });
+    } catch (e) {
+      debugPrint('Allowance loading error: $e');
+    }
+  }
 
   @override
   void initState() {
     super.initState();
     load();
+    QrService.printDeviceId();
   }
 
   // --------------------------------------------------
@@ -57,9 +84,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
       if (localAccount != null && mounted) {
         setState(() {
           name = localAccount['name']?.toString() ?? 'Customer';
-          balance =
-              (localAccount['verified_balance'] as num?)?.toDouble() ??
-                  0;
+          balance = _toDouble(localAccount['verified_balance']);
         });
       }
     } catch (e) {
@@ -68,6 +93,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
 
     // Load pending transactions.
     await _loadPendingCount();
+    await _loadAllowance(userId);
 
     // Refresh account information from backend.
     try {
@@ -79,8 +105,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
       final wallet = results[0];
       final profile = results[1];
 
-      final serverBalance =
-          (wallet['balance'] as num?)?.toDouble() ?? 0;
+      final serverBalance = _toDouble(wallet['balance']);
 
       final serverName =
           profile['name']?.toString() ?? 'Customer';
@@ -107,10 +132,10 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         online = true;
         loading = false;
       });
-    } catch (e) {
-      debugPrint('Online dashboard refresh failed: $e');
+    } catch (e, stackTrace) {
+      debugPrint('ONLINE DASHBOARD ERROR: $e');
+      debugPrint('STACK TRACE: $stackTrace');
 
-      // Continue using the last saved local balance.
       final localAccount =
           await LocalDatabase.getLocalAccount(userId);
 
@@ -119,17 +144,23 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
       setState(() {
         if (localAccount != null) {
           name = localAccount['name']?.toString() ?? 'Customer';
-          balance =
-              (localAccount['verified_balance'] as num?)?.toDouble() ??
-                  0;
+          balance = _toDouble(localAccount['verified_balance']);
         }
 
         online = false;
         loading = false;
       });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Online connection error: $e'),
+          duration: const Duration(seconds: 8),
+        ),
+      );
     }
   }
 
+  // --------------------------------------------------
   // --------------------------------------------------
   // PENDING SYNC COUNT
   // --------------------------------------------------
@@ -474,6 +505,49 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                   ),
                 ],
               ),
+            ),
+
+            // ACTIVE OFFLINE ALLOWANCE CARD
+            const SizedBox(height: 15),
+
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: const Color(0xFFE2F8EF),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: const Color(0xFFB7E8D1),
+                ),
+              ),
+              child: activeAllowance == null
+                  ? const Text(
+                      'No active offline allowance. Prepare one before going offline.',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Active Offline Allowance',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          'Total: ₹${activeAllowance!['allowance_amount']}',
+                        ),
+                        Text(
+                          'Used: ₹${activeAllowance!['spent_amount']}',
+                        ),
+                        Text(
+                          'Status: ${activeAllowance!['status']}',
+                        ),
+                      ],
+                    ),
             ),
 
             const SizedBox(height: 26),

@@ -9,7 +9,7 @@ class LocalDatabase {
   LocalDatabase._();
 
   static const String _databaseName = 'offlinepay.db';
-  static const int _databaseVersion = 6;
+  static const int _databaseVersion = 7;
 
   static Database? _database;
 
@@ -33,210 +33,217 @@ class LocalDatabase {
   }
 
   static Future<void> _createDatabase(
-    Database db,
-    int version,
-  ) async {
-    await _createTables(db);
-  }
+  Database db,
+  int version,
+) async {
+  await _createTables(db);
 
-  static Future<void> _upgradeDatabase(
-    Database db,
-    int oldVersion,
-    int newVersion,
-  ) async {
-    await _createTables(db);
+  await db.execute('''
+    CREATE INDEX IF NOT EXISTS idx_transactions_status
+    ON transactions(sync_status)
+  ''');
+}
 
-    await _ensureColumn(db, 'transactions', 'payload', 'TEXT');
-    await _ensureColumn(
-      db,
-      'transactions',
-      'sync_status',
-      "TEXT NOT NULL DEFAULT 'PENDING'",
+static Future<void> _upgradeDatabase(
+  Database db,
+  int oldVersion,
+  int newVersion,
+) async {
+  await _createTables(db);
+
+  await _ensureColumn(db, 'transactions', 'payload', 'TEXT');
+  await _ensureColumn(
+    db,
+    'transactions',
+    'sync_status',
+    "TEXT NOT NULL DEFAULT 'PENDING'",
+  );
+  await _ensureColumn(db, 'transactions', 'role', 'TEXT');
+  await _ensureColumn(db, 'transactions', 'updated_at', 'INTEGER');
+  await _ensureColumn(db, 'transactions', 'allowance_id', 'TEXT');
+  await _ensureColumn(db, 'transactions', 'synced_at', 'INTEGER');
+
+  await _ensureColumn(
+    db,
+    'local_accounts',
+    'offline_eligible',
+    'INTEGER NOT NULL DEFAULT 0',
+  );
+
+  await db.execute('''
+    CREATE INDEX IF NOT EXISTS idx_transactions_status
+    ON transactions(sync_status)
+  ''');
+}
+
+
+static Future<void> _ensureColumn(
+  DatabaseExecutor db,
+  String table,
+  String column,
+  String definition,
+) async {
+  final columns = await db.rawQuery(
+    'PRAGMA table_info($table)',
+  );
+
+  final exists = columns.any(
+    (item) => item['name'] == column,
+  );
+
+  if (!exists) {
+    await db.execute(
+      'ALTER TABLE $table ADD COLUMN $column $definition',
     );
-    await _ensureColumn(db, 'transactions', 'role', 'TEXT');
-    await _ensureColumn(db, 'transactions', 'updated_at', 'INTEGER');
-    await _ensureColumn(db, 'transactions', 'allowance_id', 'TEXT');
-    await _ensureColumn(db, 'transactions', 'synced_at', 'INTEGER');
-    await _ensureColumn(
-      db,
-      'local_accounts',
-      'offline_eligible',
-      'INTEGER NOT NULL DEFAULT 0',
-    );
   }
+}
 
-  static Future<void> _ensureColumn(
-    DatabaseExecutor db,
-    String table,
-    String column,
-    String definition,
-  ) async {
-    final columns = await db.rawQuery(
-      'PRAGMA table_info($table)',
-    );
+static Future<void> _createTables(
+  DatabaseExecutor db,
+) async {
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS local_users (
+      user_id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      email TEXT NOT NULL,
+      role TEXT NOT NULL CHECK(role IN ('customer', 'merchant')),
+      password_hash TEXT NOT NULL,
+      synced INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    )
+  ''');
 
-    final exists = columns.any(
-      (item) => item['name'] == column,
-    );
+  await db.execute('''
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_local_users_email
+    ON local_users(email COLLATE NOCASE)
+  ''');
 
-    if (!exists) {
-      await db.execute(
-        'ALTER TABLE $table ADD COLUMN $column $definition',
-      );
-    }
-  }
+  await db.execute('''
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_local_users_phone
+    ON local_users(phone)
+  ''');
 
-  static Future<void> _createTables(
-    DatabaseExecutor db,
-  ) async {
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS local_users (
-        user_id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        phone TEXT NOT NULL,
-        email TEXT NOT NULL,
-        role TEXT NOT NULL CHECK(role IN ('customer', 'merchant')),
-        password_hash TEXT NOT NULL,
-        synced INTEGER NOT NULL DEFAULT 0,
-        created_at INTEGER NOT NULL
-      )
-    ''');
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS registration_sync_queue (
+      user_id TEXT PRIMARY KEY,
+      payload TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'PENDING',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  ''');
 
-    await db.execute('''
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_local_users_email
-      ON local_users(email COLLATE NOCASE)
-    ''');
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS local_accounts (
+      user_id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT,
+      phone TEXT,
+      role TEXT NOT NULL,
+      verified_balance REAL NOT NULL DEFAULT 0,
+      reserved_balance REAL NOT NULL DEFAULT 0,
+      provisional_credit REAL NOT NULL DEFAULT 0,
+      currency TEXT NOT NULL DEFAULT 'INR',
+      account_status TEXT NOT NULL DEFAULT 'ACTIVE',
+      is_server_verified INTEGER NOT NULL DEFAULT 0,
+      offline_eligible INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL
+    )
+  ''');
 
-    await db.execute('''
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_local_users_phone
-      ON local_users(phone)
-    ''');
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS offline_allowances (
+      allowance_id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      allowance_amount REAL NOT NULL,
+      spent_amount REAL NOT NULL DEFAULT 0,
+      expires_at INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'ACTIVE',
+      created_at INTEGER NOT NULL
+    )
+  ''');
 
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS registration_sync_queue (
-        user_id TEXT PRIMARY KEY,
-        payload TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'PENDING',
-        attempts INTEGER NOT NULL DEFAULT 0,
-        last_error TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      )
-    ''');
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS transactions (
+      transaction_id TEXT PRIMARY KEY,
+      request_id TEXT,
+      customer_id TEXT,
+      merchant_id TEXT,
+      amount REAL NOT NULL,
+      token TEXT,
+      status TEXT NOT NULL DEFAULT 'PENDING',
+      sync_status TEXT NOT NULL DEFAULT 'PENDING',
+      role TEXT,
+      timestamp INTEGER NOT NULL,
+      expiry INTEGER,
+      synced INTEGER NOT NULL DEFAULT 0,
+      allowance_id TEXT,
+      payload TEXT,
+      updated_at INTEGER,
+      synced_at INTEGER
+    )
+  ''');
 
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS local_accounts (
-        user_id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        email TEXT,
-        phone TEXT,
-        role TEXT NOT NULL,
-        verified_balance REAL NOT NULL DEFAULT 0,
-        reserved_balance REAL NOT NULL DEFAULT 0,
-        provisional_credit REAL NOT NULL DEFAULT 0,
-        currency TEXT NOT NULL DEFAULT 'INR',
-        account_status TEXT NOT NULL DEFAULT 'ACTIVE',
-        is_server_verified INTEGER NOT NULL DEFAULT 0,
-        offline_eligible INTEGER NOT NULL DEFAULT 0,
-        updated_at INTEGER NOT NULL
-      )
-    ''');
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS trusted_devices (
+      device_id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      public_key TEXT NOT NULL,
+      key_algorithm TEXT NOT NULL DEFAULT 'Ed25519',
+      active INTEGER NOT NULL DEFAULT 1,
+      updated_at INTEGER NOT NULL
+    )
+  ''');
 
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS offline_allowances (
-        allowance_id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        device_id TEXT NOT NULL,
-        allowance_amount REAL NOT NULL,
-        spent_amount REAL NOT NULL DEFAULT 0,
-        expires_at INTEGER NOT NULL,
-        status TEXT NOT NULL DEFAULT 'ACTIVE',
-        created_at INTEGER NOT NULL
-      )
-    ''');
+  await db.execute('''
+    CREATE INDEX IF NOT EXISTS idx_trusted_devices_user
+    ON trusted_devices(user_id)
+  ''');
 
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS transactions (
-        transaction_id TEXT PRIMARY KEY,
-        request_id TEXT,
-        customer_id TEXT,
-        merchant_id TEXT,
-        amount REAL NOT NULL,
-        token TEXT,
-        status TEXT NOT NULL DEFAULT 'PENDING',
-        sync_status TEXT NOT NULL DEFAULT 'PENDING',
-        role TEXT,
-        timestamp INTEGER NOT NULL,
-        expiry INTEGER,
-        synced INTEGER NOT NULL DEFAULT 0,
-        allowance_id TEXT,
-        payload TEXT,
-        updated_at INTEGER,
-        synced_at INTEGER
-      )
-    ''');
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS processed_transactions (
+      transaction_id TEXT PRIMARY KEY,
+      processed_at INTEGER NOT NULL
+    )
+  ''');
 
-    // Trusted device public keys
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS trusted_devices (
-        device_id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        public_key TEXT NOT NULL,
-        key_algorithm TEXT NOT NULL DEFAULT 'Ed25519',
-        active INTEGER NOT NULL DEFAULT 1,
-        updated_at INTEGER NOT NULL
-      )
-    ''');
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS sync_queue (
+      transaction_id TEXT PRIMARY KEY,
+      payload TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'PENDING',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  ''');
 
-    await db.execute('''
-      CREATE INDEX IF NOT EXISTS idx_trusted_devices_user
-      ON trusted_devices(user_id)
-    ''');
+  await db.execute('''
+    CREATE INDEX IF NOT EXISTS idx_transactions_customer
+    ON transactions(customer_id)
+  ''');
 
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS processed_transactions (
-        transaction_id TEXT PRIMARY KEY,
-        processed_at INTEGER NOT NULL
-      )
-    ''');
+  await db.execute('''
+    CREATE INDEX IF NOT EXISTS idx_transactions_merchant
+    ON transactions(merchant_id)
+  ''');
 
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS sync_queue (
-        transaction_id TEXT PRIMARY KEY,
-        payload TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'PENDING',
-        attempts INTEGER NOT NULL DEFAULT 0,
-        last_error TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      )
-    ''');
+  await db.execute('''
+    CREATE INDEX IF NOT EXISTS idx_sync_queue_status
+    ON sync_queue(status)
+  ''');
 
-    await db.execute('''
-      CREATE INDEX IF NOT EXISTS idx_transactions_customer
-      ON transactions(customer_id)
-    ''');
+  await db.execute('''
+    CREATE INDEX IF NOT EXISTS idx_allowances_user
+    ON offline_allowances(user_id)
+  ''');
+}
 
-    await db.execute('''
-      CREATE INDEX IF NOT EXISTS idx_transactions_merchant
-      ON transactions(merchant_id)
-    ''');
-
-    await db.execute('''
-      CREATE INDEX IF NOT EXISTS idx_transactions_status
-      ON transactions(sync_status)
-    ''');
-
-    await db.execute('''
-      CREATE INDEX IF NOT EXISTS idx_sync_queue_status
-      ON sync_queue(status)
-    ''');
-
-    await db.execute('''
-      CREATE INDEX IF NOT EXISTS idx_allowances_user
-      ON offline_allowances(user_id)
-    ''');
-  }
 
   // --------------------------------------------------
   // OFFLINE REGISTRATION AND LOGIN
@@ -725,10 +732,10 @@ class LocalDatabase {
   }
 
   // --------------------------------------------------
-  // OFFLINE ALLOWANCE METHODS
-  // --------------------------------------------------
+// OFFLINE ALLOWANCE METHODS
+// --------------------------------------------------
 
-  static Future<void> saveAllowance(
+static Future<void> saveAllowance(
   Map<String, dynamic> allowance,
 ) async {
   final db = await database;
@@ -762,8 +769,6 @@ class LocalDatabase {
 
     if (existing.isNotEmpty) {
       final old = existing.first;
-
-      // Never reduce or reset locally recorded spending.
       final oldSpent = _number(old['spent_amount']);
       final serverSpent = _number(allowance['spent_amount']);
       final safeSpent = oldSpent > serverSpent
@@ -798,6 +803,74 @@ class LocalDatabase {
     }
   });
 }
+
+
+static Future<Map<String, dynamic>?> getAllowance(
+  String allowanceId,
+) async {
+  final db = await database;
+
+  final rows = await db.query(
+    'offline_allowances',
+    where: 'allowance_id = ?',
+    whereArgs: [allowanceId],
+    limit: 1,
+  );
+
+  if (rows.isEmpty) return null;
+
+  return Map<String, dynamic>.from(rows.first);
+}
+
+static Future<Map<String, dynamic>?> getActiveAllowance({
+  required String userId,
+  required String deviceId,
+}) async {
+  final db = await database;
+
+  final rows = await db.query(
+    'offline_allowances',
+    where: 'user_id = ? AND device_id = ? AND status = ?',
+    whereArgs: [userId, deviceId, 'ACTIVE'],
+    orderBy: 'created_at DESC',
+    limit: 1,
+  );
+
+  if (rows.isEmpty) return null;
+
+  return Map<String, dynamic>.from(rows.first);
+}
+
+static Future<bool> canSpendFromAllowance({
+  required String allowanceId,
+  required String userId,
+  required String deviceId,
+  required double amount,
+}) async {
+  if (amount <= 0 || !amount.isFinite) return false;
+
+  final allowance = await getAllowance(allowanceId);
+
+  if (allowance == null) return false;
+
+  if (allowance['user_id'] != userId ||
+      allowance['device_id'] != deviceId ||
+      allowance['status'] != 'ACTIVE') {
+    return false;
+  }
+
+  final expiry = _integer(allowance['expires_at']);
+
+  if (DateTime.now().millisecondsSinceEpoch >= expiry) {
+    return false;
+  }
+
+  final limit = _number(allowance['allowance_amount']);
+  final spent = _number(allowance['spent_amount']);
+
+  return amount <= limit - spent;
+}
+
   // --------------------------------------------------
   // TRANSACTION METHODS
   // --------------------------------------------------
@@ -836,9 +909,13 @@ class LocalDatabase {
             ? 1
             : 0,
         'allowance_id': transaction['allowance_id']?.toString(),
-        'payload': jsonEncode(transaction),
+        'payload': jsonEncode(
+          transaction['payload'] is Map
+        ? transaction['payload']
+        : transaction,
+        ),
         'updated_at': now,
-      },
+    },
       conflictAlgorithm: ConflictAlgorithm.abort,
     );
   }
@@ -988,12 +1065,11 @@ class LocalDatabase {
       // provisioned demo balance before its registration is synchronized.
       // Server-verified accounts may spend only against their downloaded
       // server-authorized allowance.
-      if (account['is_server_verified'] != 1 &&
-          account['offline_eligible'] != 1) {
-        throw Exception(
-          'Account is not enabled for offline spending.',
-        );
-      }
+      if (account['is_server_verified'] != 1) {
+  throw Exception(
+    'Only server-verified accounts can make offline payments.',
+  );
+}
 
       final balance = _number(account['verified_balance']);
       final reserved = _number(account['reserved_balance']);

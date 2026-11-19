@@ -504,6 +504,27 @@ class ApiService {
 
     return data;
   }
+    /// Downloads the backend-signed certificate for this device.
+  static Future<Map<String, dynamic>> getDeviceCertificate(
+    String deviceId,
+  ) async {
+    if (deviceId.trim().isEmpty) {
+      throw Exception('Device ID is required.');
+    }
+
+    final response = await _get(
+      '/devices/${Uri.encodeComponent(deviceId)}/certificate',
+    );
+
+    final data = _decodeMap(response);
+
+    if (data['certificate'] is! Map ||
+        data['signature'] == null) {
+      throw Exception('Invalid device certificate response.');
+    }
+
+    return Map<String, dynamic>.from(data);
+  }
 
   static Future<Map> createAllowance({
     required String deviceId,
@@ -550,7 +571,12 @@ class ApiService {
       publicKey: publicKey,
       keyAlgorithm: 'Ed25519',
     );
+    final certificate = await getDeviceCertificate(currentDeviceId);
 
+    await QrService.saveDeviceCertificate(
+      certificate,
+      expectedUserId: currentUserId,
+    );
     // 2. Request a new allowance or retrieve the existing active one.
     final response = await createAllowance(
       deviceId: currentDeviceId,

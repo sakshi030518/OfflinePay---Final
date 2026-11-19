@@ -7,6 +7,8 @@ import 'signup_screen.dart';
 import 'role_screen.dart';
 import 'forgot_password_screen.dart';
 
+import '../services/sync_service.dart';
+
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -59,10 +61,14 @@ class _LoginScreenState extends State<LoginScreen> {
         role: selectedRole,
       );
 
+
+      // Retry pending transactions after authentication.
+      await SyncService.retryPendingTransactions();
       final prefs = await SharedPreferences.getInstance();
 
       await prefs.setBool('remember_email', rememberEmail);
       await prefs.setString('selected_role', selectedRole);
+
 
       if (rememberEmail) {
         await prefs.setString('last_email', email.text.trim());
